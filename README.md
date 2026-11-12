@@ -1,4 +1,7 @@
 # icaps27
+## About this demo
+
+This is a small starting example for getting familiar with the road model and testing bargaining proposals. The setup can grow as needed. We can let the cyclists move, give vehicles more lane choices, enable additional passing-distance bands, lengthen the road, or give each episode more time steps. These changes can increase the number of road states and combinations of fleet actions the evaluator has to consider. Starting small makes it easier to see why the norm passes or fails before trying a larger scenario.
 
 ## Road scenario and rules
 
