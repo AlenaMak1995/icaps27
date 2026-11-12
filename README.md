@@ -27,6 +27,18 @@ The model assigns collision penalties when scoring a policy pair, and the hard s
 
 **Example.** Fleet 2’s Alice starts at cell 7. If she moves to cell 8 in the 3–4 ft band, she pays `2.50` for using that band, and Fleet 1’s cyclist at cell 9 incurs `2` for the encounter. That encounter violates the 4 ft clearance rule and satisfies the 3 ft definition. One fleet’s action can therefore affect the other fleet’s cost and whether the pair passes the proposed norm.
 
+## Tailgating and road norms
+
+**Tailgating** means that Bob ends a step **one cell behind Alice in the same lane**, while both are still driving. A gap of **two or more cells** is normal following distance for this check. The model charges Bob `1.20` for tailgating and Alice `4.00` for being tailgated. 
+
+| Rule | Initial setting | What a proposal can change |
+|---|---|---|
+| **Collision safety** | There must be a **100% probability** of avoiding vehicle and cyclist collisions throughout the episode, including between fleets. | Fixed. Every proposal must satisfy this requirement. |
+| **ER speed** | Each fleet’s ER must stay at or below **2 cells per step** for the whole episode with **100% probability**. | A new norm can lower the required probability. For example, a **50%** requirement means that at least half of the possible runs must have zero speeding by that ER. |
+| **Cyclist clearance** | Each cyclist must receive at least **4 ft of clearance** on every modeled pass, with **100% probability**. | A new norm can lower the minimum clearance to **3 ft** or **2 ft**. The closest available passing band in this demo is **3–4 ft**, so both relaxed definitions allow the same passes here. |
+
+The **initial negotiable norm** combines the 100% ER speed requirement and the 4 ft clearance rule. Collision safety is a hard requirement for every agreement.
+
 ## How fleet costs are calculated
 
 Each fleet’s cost is a weighted sum of its four road users’ expected costs. The same road event can matter differently to the two operators because they use different weights.
