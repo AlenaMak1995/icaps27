@@ -18,8 +18,8 @@ All costs are in **model units**. Lower cost is better. A lane-use cost is charg
 
 | Road user | Actions in this demo | Main costs |
 |---|---|---|
-| **Alice — lead car** | Moves 1 cell per step. In eligible states, she can choose the center lane or the 3–4 ft band. | `0.16` per active step, `+2.50` for choosing the 3–4 ft band, and `+8` if she has yet to reach the road end when the episode ends. The model also charges her `+4` when Bob tailgates her. |
-| **Bob — merging car** | Moves 1 cell per step. The model moves him from the merge lane into the center lane when he reaches his merge point. | `2.43` per active step and `+32` if he has yet to merge when the episode ends. The model also charges him `+1.20` for tailgating Alice. |
+| **Alice — lead car** | Moves 1 cell per step. In eligible states, she can choose the 4 ft lane or the 3–4 ft band. | `0.16` per active step, `+2.50` for choosing the 3–4 ft band, and `+8` if she has yet to reach the road end when the episode ends. The model also charges her `+4` when Bob tailgates her. |
+| **Bob — merging car** | Moves 1 cell per step. The model moves him from the merge lane into the 4 ft lane when he reaches his merge point. | `2.43` per active step and `+32` if he has yet to merge when the episode ends. The model also charges him `+1.20` for tailgating Alice. |
 | **ER — emergency vehicle** | Chooses speed 2 or 3. In eligible states, it can choose the center lane or the 3–4 ft band. | `4.54` per active step at speed 2 or `4.56` at speed 3, plus `0.05` for speeding at speed 3. Choosing the 3–4 ft band adds `0.20`. Ending the episode before reaching the road end adds `70`. |
 | **Cyclist** | Stays at its starting cell along the road edge. | `0.05` per active step and `+2` for a vehicle encounter in the 3–4 ft band. The model also defines a closer-pass cost of `8` and a cyclist-collision cost of `500`. |
 
