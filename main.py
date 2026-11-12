@@ -6,9 +6,9 @@ from bargaining_operator import (
 from evaluator import RoadEvaluator
 from road_demo import run_demo
 
-HORIZON = 2
+HORIZON = 4
 DEMO_OPTIONS = {
-    "clearance_ft": 4,
+    "clearance_ft": 3,
     "cost_caps": (60.0, 35.0),
     "tight_cost_caps": (50.0, 27.0),
     "speeding_probability": 0.5,

@@ -1,8 +1,7 @@
-"""Run the two-fleet road evaluator examples."""
+"""Narrate the two-fleet road evaluator examples."""
 
 import json
 from collections import defaultdict
-from pprint import pprint
 
 import numpy as np
 from scipy.optimize import linprog
@@ -53,10 +52,47 @@ def make_reference_policies(problem, evaluator, norm):
     return policies
 
 
+def _report_response(operator, response, cap):
+    speaker = f"Operator {operator}"
+    status = response["status"]
+    if status == "infeasible":
+        print(
+            f"{speaker} | With that policy fixed, I have no response that meets "
+            "the norm and safety rules."
+        )
+        return
+
+    cost = response["minimum_cost"]
+    if status == "cost_cap_exceeded":
+        print(f"{speaker} | My cheapest response costs {cost:g}, which is above my cap of {cap:g}.")
+    else:
+        print(f"{speaker} | My cheapest response costs {cost:g}, within my cap of {cap:g}.")
+
+
+def _report_pair(label, pair):
+    checks = pair["checks"]
+    if pair["status"] == "feasible":
+        print(f"Evaluator | {label} meets the norm, safety rules, and both cost caps.")
+    else:
+        print(f"Evaluator | {label} is infeasible.")
+        if any(not row["satisfied"] for row in checks["norm"].values()):
+            print("  The pair fails a norm requirement.")
+        if any(not row["satisfied"] for row in checks["hard"].values()):
+            print("  The pair fails a safety requirement.")
+
+    for fleet in (1, 2):
+        cap_check = checks["cost_caps"][f"fleet{fleet}"]
+        comparison = "within" if cap_check["satisfied"] else "above"
+        print(
+            f"  Operator {fleet} costs {cap_check['cost']:g}, "
+            f"{comparison} the cap of {cap_check['cap']:g}."
+        )
+
+
 def _run_speeding_example(evaluator, reference_2, norm, clearance_ft, caps, probability):
-    print(f"\nO1 with Fleet 2's first-step speeding command probability {probability:g}")
+    print("\nComparing two no-speeding thresholds")
     if probability == 0:
-        print("Choose a positive speeding probability to run this comparison.")
+        print("Evaluator | Set a positive speeding probability to run this comparison.")
         return
 
     data = evaluator.problem.lp_data
@@ -64,7 +100,8 @@ def _run_speeding_example(evaluator, reference_2, norm, clearance_ft, caps, prob
     start_actions = evaluator.actions[1][start]
     reference_action = reference_2[start]
     lead, merging, (reference_speed, lane), cyclist = start_actions[reference_action]
-    speed_limit = data.env.fleet2.c_speed_limit
+    fleet_2 = data.env.fleet2
+    speed_limit = fleet_2.c_speed_limit
     speeding_action = next(
         (
             index
@@ -77,31 +114,48 @@ def _run_speeding_example(evaluator, reference_2, norm, clearance_ft, caps, prob
         None,
     )
     if reference_speed > speed_limit or speeding_action is None:
-        print("This comparison needs an allowed, otherwise identical speeding action at the start.")
+        print(
+            "Evaluator | This example needs a legal-speed command and a matching "
+            "speeding command at the start."
+        )
         return
 
     mixed_fleet_2 = dict(reference_2)
     mixed_fleet_2[start] = {reference_action: 1 - probability, speeding_action: probability}
+    print(
+        "Operator 2 | I propose using a speeding command on the first step "
+        f"with probability {100 * probability:g}%."
+    )
+    print("Operator 1 | I'll fix that policy and solve O1 under the initial 100% no-speeding rule.")
     nominal_response = evaluator.solve_o1(norm, mixed_fleet_2, caps[0])
     relaxed_threshold = 1 - probability
+    if nominal_response["status"] == "infeasible" and fleet_2.speed_event_mode == "commanded":
+        print(
+            "Operator 1 | My response is infeasible. Your first-step command makes your "
+            f"chance of avoiding speeding at most {100 * relaxed_threshold:g}%, below the required 100%."
+        )
+    else:
+        _report_response(1, nominal_response, caps[0])
+
+    print(
+        "Operator 2 | I propose lowering the no-speeding threshold "
+        f"to {100 * relaxed_threshold:g}% for both fleets."
+    )
+    print("Operator 1 | I'll solve O1 again with your same policy under that threshold.")
     relaxed_norm = road_norm(relaxed_threshold, clearance_ft)
     relaxed_response = evaluator.solve_o1(relaxed_norm, mixed_fleet_2, caps[0])
-    summary = {
-        "nominal_status": nominal_response["status"],
-        "relaxed_no_speeding_threshold": relaxed_threshold,
-        "relaxed_status": relaxed_response["status"],
-    }
+    _report_response(1, relaxed_response, caps[0])
     if relaxed_response["status"] == "optimal":
         # JSON converts the integer state and action IDs to string keys.
         policy_1 = json.loads(json.dumps(relaxed_response["policy"]))
         policy_2 = json.loads(json.dumps(mixed_fleet_2))
         relaxed_pair = evaluator.evaluate_pair(relaxed_norm, policy_1, policy_2, *caps)
-        summary.update(
-            relaxed_pair_status=relaxed_pair["status"],
-            relaxed_pair_costs=relaxed_pair["costs"],
-            fleet2_no_speeding=relaxed_pair["checks"]["norm"]["op2_tau"],
+        _report_pair("The pair under the counteroffer", relaxed_pair)
+        speed_check = relaxed_pair["checks"]["norm"]["op2_tau"]
+        print(
+            f"  Operator 2 avoids speeding in {100 * speed_check['probability']:g}% of episodes. "
+            f"The required minimum is {100 * speed_check['minimum']:g}%."
         )
-    pprint(summary)
 
 
 def run_demo(
@@ -122,48 +176,52 @@ def run_demo(
     if not 0 <= speeding_probability <= 1:
         raise ValueError("speeding_probability must be between 0 and 1.")
 
+    horizon = problem.lp_data.env.horizon
+    print("\nScripted road bargaining walkthrough")
+    print(
+        f"Setup | For this {horizon}-step run, the initial norm requires {clearance_ft:g} ft "
+        "of clearance and a 100% chance of a speeding-free episode for each ER."
+    )
     norm = road_norm(1.0, clearance_ft)
     try:
         reference_1, reference_2 = make_reference_policies(problem, evaluator, norm)
     except ReferenceInfeasibleError:
         print(
-            f"Reference LP infeasible at horizon {problem.lp_data.env.horizon} "
-            f"with {clearance_ft} ft clearance and full speed compliance."
+            f"Evaluator | The joint reference LP is infeasible under this norm "
+            f"at horizon {horizon}."
         )
-        print("Try a shorter horizon or a different allowed clearance in main.py.")
         return
 
     reference_pair = evaluator.evaluate_pair(norm, reference_1, reference_2, alpha_1, alpha_2)
-    print("Reference pair and costs")
-    pprint({"status": reference_pair["status"], "costs": reference_pair["costs"]})
+    print("Setup | A joint optimization supplied one reference policy for each operator.")
+    _report_pair("The reference pair", reference_pair)
 
+    print("\nResponses to the reference policies")
+    print(f"Operator 1 | My cap is {alpha_1:g}. I'll fix Operator 2's reference policy and solve O1.")
     response_1 = evaluator.solve_o1(norm, reference_2, alpha_1)
+    _report_response(1, response_1, alpha_1)
+    print(f"Operator 2 | My cap is {alpha_2:g}. I'll fix Operator 1's reference policy and solve O2.")
     response_2 = evaluator.solve_o2(norm, reference_1, alpha_2)
-    print(f"\nConditional responses with caps {alpha_1:g} and {alpha_2:g}")
-    for name, response in (("O1", response_1), ("O2", response_2)):
-        cost = response["minimum_cost"]
-        pprint({
-            "problem": name,
-            "status": response["status"],
-            "minimum_cost": round(cost, 3) if cost is not None else None,
-        })
+    _report_response(2, response_2, alpha_2)
 
+    print("\nChecking alternative cost caps against the reference policies")
+    print(f"Operator 1 | I'll check O1 with a cost cap of {tight_alpha_1:g}.")
     tight_o1 = evaluator.solve_o1(norm, reference_2, tight_alpha_1)
+    _report_response(1, tight_o1, tight_alpha_1)
+    print(f"Operator 2 | I'll check O2 with a cost cap of {tight_alpha_2:g}.")
     tight_o2 = evaluator.solve_o2(norm, reference_1, tight_alpha_2)
-    print(f"\nConditional responses with comparison caps {tight_alpha_1:g} and {tight_alpha_2:g}")
-    pprint({"O1": tight_o1["status"], "O2": tight_o2["status"]})
+    _report_response(2, tight_o2, tight_alpha_2)
     tight_pair = evaluator.evaluate_pair(norm, reference_1, reference_2, tight_alpha_1, alpha_2)
-    print(f"\nReference pair with Fleet 1 cap set to {tight_alpha_1:g}")
-    pprint({"status": tight_pair["status"], "costs": tight_pair["costs"]})
+    _report_pair("The reference pair with Operator 1's comparison cap", tight_pair)
 
-    print("\nActual pair made from the returned policies")
+    print("\nChecking the two returned policies together")
     if response_1["status"] == response_2["status"] == "optimal":
         actual_pair = evaluator.evaluate_pair(
             norm, response_1["policy"], response_2["policy"], alpha_1, alpha_2
         )
-        pprint({"status": actual_pair["status"], "costs": actual_pair["costs"]})
+        _report_pair("The pair made from the original O1 and O2 responses", actual_pair)
     else:
-        print("Both solves must return a policy before the pair can be evaluated.")
+        print("Evaluator | I need a returned policy from each operator to check the pair.")
 
     _run_speeding_example(
         evaluator, reference_2, norm, clearance_ft, (alpha_1, alpha_2), speeding_probability
