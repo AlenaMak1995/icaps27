@@ -58,4 +58,27 @@ Each fleet’s cost is a weighted sum of its four road users’ expected costs. 
 | `agent.py` | Defines the four road users, their state and actions, movement rules, event flags, and per-user cost coefficients in `E4CostParams`. Uses NumPy. |
 | `bargaining_operator.py` | Places two fleets on the same road, adds interactions between them, and builds the joint model with fleet costs and norm checks. Uses the first module, NumPy, and SciPy. |
 
+Let $T$ mean the episode has ended and $N_i$ mean Fleet $i$'s ER
+has obeyed the speed limit throughout the episode.
+
+```math
+\Phi_{\theta,d}
+=
+\bigwedge_{i=1}^{2}
+\left(
+\mathsf{P}_{\ge\theta}\big[\mathsf{F}(T\land N_i)\big]
+\land
+\mathsf{P}_{\ge 1}\big[\mathsf{F}(T\land S_{i,d})\big]
+\right)
+```
+
+The initial norm is $\Phi_{1,4}$.
+
+```math
+\Pr\big[\mathsf{F}(T\land\psi)\big]
+=
+\sum_{s,a} q_\psi(s,a)\,x(s,a)
+=
+q_\psi^\top x
+```
 
