@@ -58,8 +58,15 @@ Each fleet’s cost is a weighted sum of its four road users’ expected costs. 
 | `agent.py` | Defines the four road users, their state and actions, movement rules, event flags, and per-user cost coefficients in `E4CostParams`. Uses NumPy. |
 | `bargaining_operator.py` | Places two fleets on the same road, adds interactions between them, and builds the joint model with fleet costs and norm checks. Uses the first module, NumPy, and SciPy. |
 
-Let $T$ mean the episode has ended and $N_i$ mean Fleet $i$'s ER
-has obeyed the speed limit throughout the episode.
+## How we express and evaluate a norm
+
+An offer specifies the required probability of a speeding-free episode for each emergency vehicle (ER) and the minimum clearance for each cyclist. The initial norm is `road_norm(1.0, 4)`. It requires 100% ER speed compliance and 4 ft of cyclist clearance.
+
+### 1. Write the norm in PCTL
+
+The road model records speeding, passing, and collision events as the episode progresses. Let $T$ mean the episode has ended. Let $N_i$ mean Fleet $i$'s ER has never commanded a speed above 2 cells per step, and let $S_{i,d}$ mean Fleet $i$'s cyclist has satisfied the $d$-foot clearance definition throughout the episode. The cyclist check includes passes by vehicles from either fleet.
+
+For a no-speeding probability threshold $\theta$ and a clearance definition $d$, the offered norm is
 
 ```math
 \Phi_{\theta,d}
@@ -69,16 +76,57 @@ has obeyed the speed limit throughout the episode.
 \mathsf{P}_{\ge\theta}\big[\mathsf{F}(T\land N_i)\big]
 \land
 \mathsf{P}_{\ge 1}\big[\mathsf{F}(T\land S_{i,d})\big]
-\right)
+\right).
 ```
 
-The initial norm is $\Phi_{1,4}$.
+Here $\mathsf{F}$ means “eventually.” Since every episode ends by the horizon, the flags at the terminal state tell us whether the rules held throughout the episode. The initial norm is $\Phi_{1,4}$. Separate hard safety constraints require zero probability of vehicle and cyclist collisions.
+
+### 2. Convert the probability checks into linear inequalities
+
+Let $x(s,a)$ be the expected number of times the two fleets take joint action $a$ in state $s$ during one episode. The vector $x$ is the **occupation measure**.
+
+For each monitored property $\psi$, the code builds a vector $q_\psi$. Its entry for $(s,a)$ is the probability that this action leads directly to a terminal state where $\psi$ holds.
+
+```math
+q_\psi(s,a)
+=
+\sum_{s'\models T\land\psi} P(s'\mid s,a).
+```
+
+Every episode enters a terminal state exactly once. We can therefore compute the probability of a compliant episode by adding the contributions of all transitions into compliant terminal states.
 
 ```math
 \Pr\big[\mathsf{F}(T\land\psi)\big]
 =
 \sum_{s,a} q_\psi(s,a)\,x(s,a)
 =
-q_\psi^\top x
+q_\psi^\top x.
 ```
 
+For example, requiring Fleet $i$'s ER to obey the speed limit with probability at least $\theta$ gives the linear inequality $q_{N_i}^\top x\ge\theta$. The function `build_two_fleet_lp_data()` builds these probability vectors, the occupation flow constraints, and the fleet cost vectors.
+
+### 3. Apply the offered threshold and clearance definition
+
+`road_norm(theta, clearance_ft)` encodes an offer as $z=(\tau,\sigma_4,\sigma_3,\sigma_2)$. The speed relaxation is $\tau=1-\theta$. For example, $\tau=0.5$ requires a speeding-free episode with probability at least 0.5 for each ER.
+
+The clearance definition changes which encounters count as violations. The three clearance slacks select the definition as follows.
+
+| Offered clearance | What the monitor checks | Clearance slacks |
+|---|---|---|
+| **4 ft** | No encounters in the 3–4 ft band, closer passes, or cyclist collisions | $(0,0,0)$ |
+| **3 ft** | No closer passes or cyclist collisions | $(1,0,0)$ |
+| **2 ft** | No modeled cyclist collisions | $(1,1,0)$ |
+
+Each candidate clearance row requires $q_{S_{i,d}}^\top x\ge 1-\sigma_d$. A slack of 1 lowers that row’s required probability to zero, leaving the chosen definition as the strictest active check. The 3 ft and 2 ft checks agree in the current demo because the closer passing bands are disabled.
+
+The code stacks the speed and clearance inequalities for both fleets in the form
+
+```math
+G_{\mathrm{relax}}x+b_{\mathrm{relax}}\le Rz.
+```
+
+### 4. Solve or evaluate a proposal
+
+For **O1**, the evaluator fixes Fleet 2’s policy and uses `scipy.optimize.linprog` to find the lowest-cost Fleet 1 policy that satisfies the flow constraints, hard safety rules, and offered norm. **O2** does the same with the fleets reversed. Each solve compares the minimum cost with the responding fleet’s cost cap.
+
+When both fleets submit a policy, `evaluate_pair()` checks the probabilities and both cost caps for that exact pair under the offered norm.
