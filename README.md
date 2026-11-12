@@ -58,75 +58,73 @@ Each fleet’s cost is a weighted sum of its four road users’ expected costs. 
 | `agent.py` | Defines the four road users, their state and actions, movement rules, event flags, and per-user cost coefficients in `E4CostParams`. Uses NumPy. |
 | `bargaining_operator.py` | Places two fleets on the same road, adds interactions between them, and builds the joint model with fleet costs and norm checks. Uses the first module, NumPy, and SciPy. |
 
-## How we express and evaluate a norm
+## How we encode and evaluate road norms
 
-An offer specifies the required probability of a speeding-free episode for each emergency vehicle (ER) and the minimum clearance for each cyclist. The initial norm is `road_norm(1.0, 4)`. It requires 100% ER speed compliance and 4 ft of cyclist clearance.
+### Initial norms
 
-### 1. Write the norm in PCTL
+Following the AAMAS paper, we express the norms in $\mathrm{PLT}^{1}\mathrm{L}$, a fragment of probabilistic linear temporal logic in which temporal operators do not nest. A formula $P_{[\lambda,1]}(\varphi)$ requires that the probability of runs satisfying $\varphi$ be at least $\lambda$. We evaluate this probability under the two fleets’ policies.
 
-The road model records speeding, passing, and collision events as the episode progresses. Let $T$ mean the episode has ended. Let $N_i$ mean Fleet $i$'s ER has never commanded a speed above 2 cells per step, and let $S_{i,d}$ mean Fleet $i$'s cyclist has satisfied the $d$-foot clearance definition throughout the episode. The cyclist check includes passes by vehicles from either fleet.
-
-For a no-speeding probability threshold $\theta$ and a clearance definition $d$, the offered norm is
+For each fleet $i$, the initial road norms are
 
 ```math
-\Phi_{\theta,d}
-=
-\bigwedge_{i=1}^{2}
-\left(
-\mathsf{P}_{\ge\theta}\big[\mathsf{F}(T\land N_i)\big]
-\land
-\mathsf{P}_{\ge 1}\big[\mathsf{F}(T\land S_{i,d})\big]
-\right).
+\begin{aligned}
+\Pr(G\neg\mathrm{spd}_i) &\ge 1,\\
+\Pr(G\,\mathrm{clr}_i) &\ge 1.
+\end{aligned}
 ```
 
-Here $\mathsf{F}$ means “eventually.” Since every episode ends by the horizon, the flags at the terminal state tell us whether the rules held throughout the episode. The initial norm is $\Phi_{1,4}$. Separate hard safety constraints require zero probability of vehicle and cyclist collisions.
+Here $G$ means “throughout the run.” The atom $\mathrm{spd}_i$ represents Fleet $i$'s ER commanding a speed above 2 cells per step. The atom $\mathrm{clr}_i$ represents safe clearance for Fleet $i$'s cyclist, including passes by vehicles from either fleet. Its initial meaning is **4 ft of clearance**. Separate hard safety constraints require probability 1 of avoiding vehicle collisions and probability 1 of avoiding cyclist collisions.
 
-### 2. Convert the probability checks into linear inequalities
+### The two ways to modify a norm
 
-Let $x(s,a)$ be the expected number of times the two fleets take joint action $a$ in state $s$ during one episode. The vector $x$ is the **occupation measure**.
-
-For each monitored property $\psi$, the code builds a vector $q_\psi$. Its entry for $(s,a)$ is the probability that this action leads directly to a terminal state where $\psi$ holds.
+**Change a probability threshold.** A speed offer changes the required probability of an episode with zero ER speeding. The paper calls this slack $\sigma_{\mathrm{speed}}$. The notebook calls it $\tau$.
 
 ```math
-q_\psi(s,a)
-=
-\sum_{s'\models T\land\psi} P(s'\mid s,a).
+\Pr(G\neg\mathrm{spd}_i)\ge 1-\tau.
 ```
 
-Every episode enters a terminal state exactly once. We can therefore compute the probability of a compliant episode by adding the contributions of all transitions into compliant terminal states.
+For example, $\tau=0.5$ requires at least half of the possible runs to be speeding-free for each ER.
+
+**Change the definition of an atomic proposition.** The labeling function $L$ specifies the states in which an atom is true. The designer supplies three allowed meanings for $\mathrm{clr}_i$. They form nested sets of states that count as clear.
 
 ```math
-\Pr\big[\mathsf{F}(T\land\psi)\big]
-=
-\sum_{s,a} q_\psi(s,a)\,x(s,a)
-=
-q_\psi^\top x.
+L(\mathrm{clr}_i)=B_{i,4\mathrm{ft}}
+\quad\text{initially},\qquad
+B_{i,4\mathrm{ft}}\subseteq B_{i,3\mathrm{ft}}\subseteq B_{i,2\mathrm{ft}}.
 ```
 
-For example, requiring Fleet $i$'s ER to obey the speed limit with probability at least $\theta$ gives the linear inequality $q_{N_i}^\top x\ge\theta$. The function `build_two_fleet_lp_data()` builds these probability vectors, the occupation flow constraints, and the fleet cost vectors.
+A clearance offer chooses one of these meanings and requires it to hold with probability 1. The notebook uses the following ordered slack profiles to select the clearance check.
 
-### 3. Apply the offered threshold and clearance definition
+| Offered clearance | $(\sigma_{4\mathrm{ft}},\sigma_{3\mathrm{ft}},\sigma_{2\mathrm{ft}})$ |
+|---|---|
+| **4 ft** | $(0,0,0)$ |
+| **3 ft** | $(1,0,0)$ |
+| **2 ft** | $(1,1,0)$ |
 
-`road_norm(theta, clearance_ft)` encodes an offer as $z=(\tau,\sigma_4,\sigma_3,\sigma_2)$. The speed relaxation is $\tau=1-\theta$. For example, $\tau=0.5$ requires a speeding-free episode with probability at least 0.5 for each ER.
+Each candidate row has a probability requirement of $1-\sigma_d$. A slack of 1 makes that row inactive, so the strictest row with zero slack determines the offered clearance. The paper’s optimization selects the strictest interpretation with slack below a small tolerance. In the notebook, `road_norm()` builds the profile directly from the offered distance. The current action set makes the 3 ft and 2 ft checks equivalent.
 
-The clearance definition changes which encounters count as violations. The three clearance slacks select the definition as follows.
+### From a temporal rule to a linear constraint
 
-| Offered clearance | What the monitor checks | Clearance slacks |
-|---|---|---|
-| **4 ft** | No encounters in the 3–4 ft band, closer passes, or cyclist collisions | $(0,0,0)$ |
-| **3 ft** | No closer passes or cyclist collisions | $(1,0,0)$ |
-| **2 ft** | No modeled cyclist collisions | $(1,1,0)$ |
+The paper builds a monitor that tracks progress toward satisfying the formula. For the road rules in this demo, the model already records the required history. For example, `c_speed_bad` turns on when the ER first speeds and stays on for the rest of the episode. At termination, the flag tells us whether $G\neg\mathrm{spd}_i$ held throughout the run.
 
-Each candidate clearance row requires $q_{S_{i,d}}^\top x\ge 1-\sigma_d$. A slack of 1 lowers that row’s required probability to zero, leaving the chosen definition as the strictest active check. The 3 ft and 2 ft checks agree in the current demo because the closer passing bands are disabled.
-
-The code stacks the speed and clearance inequalities for both fleets in the form
+Let $x(s,a)$ be the expected number of times joint action $a$ is taken in state $s$ before the episode ends. For a monitored formula $\varphi$, let $\operatorname{Acc}(\varphi)$ be the terminal states where its monitor accepts. The code builds a vector $q_\varphi$ from the transition probabilities $T(s,a,s')$.
 
 ```math
-G_{\mathrm{relax}}x+b_{\mathrm{relax}}\le Rz.
+\begin{aligned}
+q_\varphi(s,a)
+&=\sum_{s'\in\operatorname{Acc}(\varphi)}T(s,a,s'),\\
+\Pr(\varphi)
+&=\sum_{s,a}x(s,a)\,q_\varphi(s,a)
+=q_\varphi^\top x.
+\end{aligned}
 ```
 
-### 4. Solve or evaluate a proposal
+Every run enters a terminal state exactly once, so the sum counts the probability of a compliant run. A threshold $\lambda$ therefore becomes the linear constraint $q_\varphi^\top x\ge\lambda$.
 
-For **O1**, the evaluator fixes Fleet 2’s policy and uses `scipy.optimize.linprog` to find the lowest-cost Fleet 1 policy that satisfies the flow constraints, hard safety rules, and offered norm. **O2** does the same with the fleets reversed. Each solve compares the minimum cost with the responding fleet’s cost cap.
+### How the notebook solves a fixed offer
 
-When both fleets submit a policy, `evaluate_pair()` checks the probabilities and both cost caps for that exact pair under the offered norm.
+The offered speed threshold and clearance definition determine the right-hand sides of the norm constraints. The solver combines those rows with occupation-flow constraints and hard collision-safety constraints.
+
+`solve_o1()` fixes Fleet 2’s policy and minimizes Fleet 1’s cost under the offered norm. `solve_o2()` reverses the roles. Each solve checks the resulting minimum against the responding fleet’s cost cap. `evaluate_pair()` checks both costs and all norm constraints for a submitted policy pair.
+
+The notebook uses the AAMAS encoding to evaluate a **supplied offer**. The paper uses the encoding inside a centralized optimization that **selects a norm modification**.
