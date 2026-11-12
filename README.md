@@ -62,7 +62,7 @@ Each fleet’s cost is a weighted sum of its four road users’ expected costs. 
 
 ### Initial norms
 
-Following the AAMAS paper, we express the norms in $\mathrm{PLT}^{1}\mathrm{L}$, a fragment of probabilistic linear temporal logic in which temporal operators do not nest. A formula $P_{[\lambda,1]}(\varphi)$ requires that the probability of runs satisfying $\varphi$ be at least $\lambda$. We evaluate this probability under the two fleets’ policies.
+We express the norms in $\mathrm{PLTL}$, a fragment of probabilistic linear temporal logic in which temporal operators do not nest. A formula $P_{\lambda}(\varphi)$ requires that the probability of runs satisfying $\varphi$ be at least $\lambda$. We evaluate this probability under the two fleets’ policies.
 
 For each fleet $i$, the initial road norms are
 
@@ -77,7 +77,7 @@ Here $G$ means “throughout the run.” The atom $\mathrm{spd}_i$ represents Fl
 
 ### The two ways to modify a norm
 
-**Change a probability threshold.** A speed offer changes the required probability of an episode with zero ER speeding. The paper calls this slack $\sigma_{\mathrm{speed}}$. The notebook calls it $\tau$.
+**Change a probability threshold.** A speed offer changes the required probability of an episode with zero ER speeding. We will call this slack $\tau$.
 
 ```math
 \Pr(G\neg\mathrm{spd}_i)\ge 1-\tau.
@@ -105,14 +105,14 @@ Each candidate row has a probability requirement of $1-\sigma_d$. A slack of 1 m
 
 ### From a temporal rule to a linear constraint
 
-The paper builds a monitor that tracks progress toward satisfying the formula. For the road rules in this demo, the model already records the required history. For example, `c_speed_bad` turns on when the ER first speeds and stays on for the rest of the episode. At termination, the flag tells us whether $G\neg\mathrm{spd}_i$ held throughout the run.
+We build a monitor that tracks progress toward satisfying the formula. For the road rules in this demo, the model already records the required history. For example, `c_speed_bad` turns on when the ER first speeds and stays on for the rest of the episode. At termination, the flag tells us whether $G\neg\mathrm{spd}_i$ held throughout the run.
 
-Let $x(s,a)$ be the expected number of times joint action $a$ is taken in state $s$ before the episode ends. For a monitored formula $\varphi$, let $\operatorname{Acc}(\varphi)$ be the terminal states where its monitor accepts. The code builds a vector $q_\varphi$ from the transition probabilities $T(s,a,s')$.
+Let $x(s,a)$ be the expected number of times joint action $a$ is taken in state $s$ before the episode ends. For a monitored formula $\varphi$, let $\mathrm{Acc}(\varphi)$ be the terminal states where its monitor accepts. The code builds a vector $q_\varphi$ from the transition probabilities $T(s,a,s')$.
 
 ```math
 \begin{aligned}
 q_\varphi(s,a)
-&=\sum_{s'\in\operatorname{Acc}(\varphi)}T(s,a,s'),\\
+&=\sum_{s'\in\mathrm{Acc}(\varphi)}T(s,a,s'),\\
 \Pr(\varphi)
 &=\sum_{s,a}x(s,a)\,q_\varphi(s,a)
 =q_\varphi^\top x.
@@ -121,10 +121,4 @@ q_\varphi(s,a)
 
 Every run enters a terminal state exactly once, so the sum counts the probability of a compliant run. A threshold $\lambda$ therefore becomes the linear constraint $q_\varphi^\top x\ge\lambda$.
 
-### How the notebook solves a fixed offer
 
-The offered speed threshold and clearance definition determine the right-hand sides of the norm constraints. The solver combines those rows with occupation-flow constraints and hard collision-safety constraints.
-
-`solve_o1()` fixes Fleet 2’s policy and minimizes Fleet 1’s cost under the offered norm. `solve_o2()` reverses the roles. Each solve checks the resulting minimum against the responding fleet’s cost cap. `evaluate_pair()` checks both costs and all norm constraints for a submitted policy pair.
-
-The notebook uses the AAMAS encoding to evaluate a **supplied offer**. The paper uses the encoding inside a centralized optimization that **selects a norm modification**.
